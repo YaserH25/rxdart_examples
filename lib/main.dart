@@ -55,7 +55,7 @@ class Bloc {
         setTypeOfThing: typeOfThingsSubject.sink,
         currentTypeOfThing: typeOfThingsSubject.stream,
         things: filteredThings);
-  }
+  } 
 }
 
 const things = [
