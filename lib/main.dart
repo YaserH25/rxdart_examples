@@ -11,61 +11,89 @@ void main(List<String> args) {
   runApp(const MaterialApp(home: HomeApp()));
 }
 
-enum TypeOfThing { animal, person }
-
-@immutable
-class Thing {
-  final TypeOfThing type;
-  final String name;
-
-  const Thing({required this.type, required this.name});
-}
-
 @immutable
 class Bloc {
-  final Sink<TypeOfThing?> setTypeOfThing;
-  final Stream<TypeOfThing?> currentTypeOfThing;
-  final Stream<Iterable<Thing>> things;
+  final Sink<String?> setFirstName;
+  final Sink<String?> setLastName;
+  final Stream<String> fullName;
 
-  const Bloc._({
-    required this.setTypeOfThing,
-    required this.currentTypeOfThing,
-    required this.things,
-  });
+  const Bloc._(
+      {required this.setFirstName,
+      required this.setLastName,
+      required this.fullName});
 
   void dispose() {
-    setTypeOfThing.close();
+    setFirstName.close();
+    setLastName.close();
   }
 
-  factory Bloc({
-    required Iterable<Thing> things,
-  }) {
-    final typeOfThingsSubject = BehaviorSubject<TypeOfThing?>();
+  factory Bloc() {
+    final firstNameSubject = BehaviorSubject<String?>();
+    final lastNameSubject = BehaviorSubject<String?>();
 
-    final filteredThings = typeOfThingsSubject
-        .debounceTime(const Duration(milliseconds: 300))
-        .map<Iterable<Thing>>((typeOfThings) {
-      if (typeOfThings != null) {
-        return things.where((element) => element.type == typeOfThings);
+    final Stream<String> fullName = Rx.combineLatest2(
+        firstNameSubject.startWith(null), lastNameSubject.startWith(null),
+        (firstName, lastName) {
+      if (firstName != null &&
+          firstName.isNotEmpty &&
+          lastName != null &&
+          lastName.isNotEmpty) {
+        return '$firstName $lastName';
       } else {
-        return things;
+        return 'Both first and last name must be provided';
       }
-    }).startWith(things);
+    });
+
     return Bloc._(
-        setTypeOfThing: typeOfThingsSubject.sink,
-        currentTypeOfThing: typeOfThingsSubject.stream,
-        things: filteredThings);
-  } 
+        setFirstName: firstNameSubject.sink,
+        setLastName: lastNameSubject.sink,
+        fullName: fullName);
+  }
 }
 
-const things = [
-  Thing(type: TypeOfThing.person, name: 'Foo'),
-  Thing(type: TypeOfThing.person, name: 'Bar'),
-  Thing(type: TypeOfThing.person, name: 'Baz'),
-  Thing(type: TypeOfThing.animal, name: 'Bunz'),
-  Thing(type: TypeOfThing.animal, name: 'Fluffers'),
-  Thing(type: TypeOfThing.animal, name: 'Woofz'),
-];
+typedef AsyncSnapshotBuilderCallback<T> = Widget Function(
+    BuildContext context, T? value);
+
+class AsyncSnapshotBuilder<T> extends StatelessWidget {
+  final Stream<T> stream;
+  final AsyncSnapshotBuilderCallback<T>? onNone;
+  final AsyncSnapshotBuilderCallback<T>? onWaiting;
+  final AsyncSnapshotBuilderCallback<T>? onActive;
+  final AsyncSnapshotBuilderCallback<T>? onDone;
+
+  const AsyncSnapshotBuilder(
+      {Key? key,
+      required this.stream,
+      this.onNone,
+      this.onWaiting,
+      this.onActive,
+      this.onDone})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<T>(
+      stream: stream,
+      builder: (context, snapshot) {
+        switch (snapshot.connectionState) {
+          case ConnectionState.none:
+            final callback = onNone ?? (_, __) => const SizedBox();
+            return callback(context, snapshot.data);
+          case ConnectionState.waiting:
+            final callback =
+                onWaiting ?? (_, __) => const CircularProgressIndicator();
+            return callback(context, snapshot.data);
+          case ConnectionState.active:
+            final callback = onActive ?? (_, __) => const SizedBox();
+            return callback(context, snapshot.data);
+          case ConnectionState.done:
+            final callback = onDone ?? (_, __) => const SizedBox();
+            return callback(context, snapshot.data);
+        }
+      },
+    );
+  }
+}
 
 class HomeApp extends StatefulWidget {
   const HomeApp({super.key});
@@ -80,7 +108,7 @@ class _HomeAppState extends State<HomeApp> {
   @override
   void initState() {
     super.initState();
-    bloc = Bloc(things: things);
+    bloc = Bloc();
   }
 
   @override
@@ -93,49 +121,30 @@ class _HomeAppState extends State<HomeApp> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('home'),
+        title: const Text('CombineLatest with RxDart'),
       ),
-      body: Column(
-        children: [
-          StreamBuilder<TypeOfThing?>(
-            stream: bloc.currentTypeOfThing,
-            builder: (context, snapshot) {
-              final selectedTypeOfThing = snapshot.data;
-              return Wrap(
-                children: TypeOfThing.values
-                    .map(
-                      (typeOfThing) => FilterChip(
-                        selectedColor: Colors.blueAccent,
-                        onSelected: (selected) {
-                          final type = selected ? typeOfThing : null;
-                          bloc.setTypeOfThing.add(type);
-                        },
-                        label: Text(typeOfThing.name),
-                        selected: selectedTypeOfThing == typeOfThing,
-                      ),
-                    )
-                    .toList(),
-              );
-            },
-          ),
-          Expanded(
-              child: StreamBuilder<Iterable<Thing>>(
-            stream: bloc.things,
-            builder: (context, snapshot) {
-              final things = snapshot.data ?? [];
-              return ListView.builder(
-                itemCount: things.length,
-                itemBuilder: (context, index) {
-                  final thing = things.elementAt(index);
-                  return ListTile(
-                    title: Text(thing.name),
-                    subtitle: Text(thing.type.name),
-                  );
-                },
-              );
-            },
-          ))
-        ],
+      body: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          children: [
+            TextField(
+              decoration:
+                  const InputDecoration(hintText: 'Enter first name here...'),
+              onChanged: bloc.setFirstName.add,
+            ),
+            TextField(
+              decoration:
+                  const InputDecoration(hintText: 'Enter last name here...'),
+              onChanged: bloc.setLastName.add,
+            ),
+            AsyncSnapshotBuilder<String>(
+              stream: bloc.fullName,
+              onActive: (context, value) {
+                return Text(value ?? '');
+              },
+            )
+          ],
+        ),
       ),
     );
   }
